@@ -1,6 +1,7 @@
 """
 Trading Noah Caption Bot — OpenAI Vision
 Pure Python stdlib. Zero dependencies. Any Python version.
+TOKEN and OPENAI_KEY must be set in Railway Environment Variables.
 """
 import os
 import json
@@ -9,11 +10,20 @@ import ssl
 import urllib.request
 import urllib.error
 import time
+import sys
 
-# ── CONFIG ────────────────────────────────────────────────────────
-TOKEN      = os.getenv("TOKEN",      "8318068300:AAEyPcbw4BRMgGNj4QvenyHAeIANqqtU5u8")
-OPENAI_KEY = os.getenv("OPENAI_KEY", "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")
-OWNER_ID   = int(os.getenv("OWNER_ID", "8004113948"))
+# ── CONFIG — ALL FROM ENVIRONMENT VARIABLES ONLY ─────────────────
+TOKEN      = os.environ.get("TOKEN")
+OPENAI_KEY = os.environ.get("OPENAI_KEY")
+OWNER_ID   = os.environ.get("OWNER_ID", "8004113948")
+
+# Crash immediately if token missing — clear error message
+if not TOKEN:
+    print("❌ ERROR: TOKEN environment variable not set in Railway!")
+    sys.exit(1)
+if not OPENAI_KEY:
+    print("❌ ERROR: OPENAI_KEY environment variable not set in Railway!")
+    sys.exit(1)
 
 TG_BASE = f"https://api.telegram.org/bot{TOKEN}"
 TG_FILE = f"https://api.telegram.org/file/bot{TOKEN}"
@@ -94,13 +104,12 @@ def tg_safe(method, data):
     try:
         return tg_post(method, data)
     except Exception as e:
-        print(f"[{method} ignored] {e}")
+        print(f"[{method}] {e}")
         return None
 
 
 # ── TELEGRAM WRAPPERS ─────────────────────────────────────────────
 def send_msg(chat_id, text):
-    # Use plain text only — no special formatting to avoid errors
     return tg_post("sendMessage", {"chat_id": chat_id, "text": text})
 
 
@@ -122,11 +131,10 @@ def tg_download(file_path):
 
 
 def get_updates(offset=0):
-    # Long polling — 20 second timeout, simple params
     return tg_post("getUpdates", {"offset": offset, "timeout": 20})
 
 
-# ── OPENAI ────────────────────────────────────────────────────────
+# ── OPENAI VISION ─────────────────────────────────────────────────
 def ai_image(img_bytes, extra=""):
     b64 = base64.b64encode(img_bytes).decode()
     user_text = "Analyze this image and generate 3 Trading Noah Hinglish captions."
@@ -156,7 +164,7 @@ def ai_text(desc):
         "max_tokens": 2000,
         "messages": [
             {"role": "system", "content": STYLE_PROMPT},
-            {"role": "user",   "content": "Generate 3 Trading Noah Hinglish captions for: " + desc}
+            {"role": "user", "content": "Generate 3 Trading Noah Hinglish captions for: " + desc}
         ]
     }
     r = http_post_json(OAI_URL, payload, {"Authorization": "Bearer " + OPENAI_KEY})
@@ -166,31 +174,31 @@ def ai_text(desc):
 # ── HANDLERS ──────────────────────────────────────────────────────
 def on_start(chat_id):
     send_msg(chat_id,
-        "🔥 Trading Noah Caption Bot\n\n"
+        "Trading Noah Caption Bot\n\n"
         "Send me:\n"
-        "📸 Photo — 3 viral captions generated\n"
-        "🎥 Video — thumbnail analyzed, captions generated\n"
-        "✍️ Text — describe content, captions generated\n\n"
-        "Ready to copy-paste in your style! 🚀"
+        "Photo - 3 viral captions generated\n"
+        "Video - thumbnail analyzed, captions generated\n"
+        "Text - describe content, captions generated\n\n"
+        "Ready to copy-paste in your style!"
     )
 
 
 def on_photo(chat_id, photos, caption=""):
-    w = send_msg(chat_id, "🔍 Analyzing photo... please wait ⏳")
+    w   = send_msg(chat_id, "Analyzing photo... please wait")
     wid = w["result"]["message_id"]
     try:
         best = max(photos, key=lambda p: p.get("file_size", 0))
         img  = tg_download(tg_get_file(best["file_id"]))
         caps = ai_image(img, caption)
         del_msg(chat_id, wid)
-        send_msg(chat_id, "✅ Your 3 captions are ready:\n\n" + caps)
+        send_msg(chat_id, "Your 3 captions are ready:\n\n" + caps)
     except Exception as e:
         print("[photo]", e)
-        edit_msg(chat_id, wid, "❌ Error: " + str(e) + "\n\nTry again bhai!")
+        edit_msg(chat_id, wid, "Error generating captions. Try again!")
 
 
 def on_video(chat_id, video, caption=""):
-    w = send_msg(chat_id, "🎥 Got video! Analyzing thumbnail... ⏳")
+    w   = send_msg(chat_id, "Got video! Analyzing thumbnail...")
     wid = w["result"]["message_id"]
     try:
         thumb = video.get("thumbnail") or video.get("thumb")
@@ -200,41 +208,41 @@ def on_video(chat_id, video, caption=""):
         else:
             caps = ai_text(caption or "trading results video Quotex signals wins")
         del_msg(chat_id, wid)
-        send_msg(chat_id, "✅ Your 3 captions are ready:\n\n" + caps)
+        send_msg(chat_id, "Your 3 captions are ready:\n\n" + caps)
     except Exception as e:
         print("[video]", e)
-        edit_msg(chat_id, wid, "❌ Error: " + str(e) + "\n\nTry again bhai!")
+        edit_msg(chat_id, wid, "Error generating captions. Try again!")
 
 
 def on_document(chat_id, doc, caption=""):
     mime = doc.get("mime_type", "")
     if not mime.startswith("image/"):
-        send_msg(chat_id, "📸 Send photos or videos only bhai!")
+        send_msg(chat_id, "Send photos or videos only!")
         return
-    w = send_msg(chat_id, "🔍 Analyzing image... ⏳")
+    w   = send_msg(chat_id, "Analyzing image...")
     wid = w["result"]["message_id"]
     try:
         img  = tg_download(tg_get_file(doc["file_id"]))
         caps = ai_image(img, caption)
         del_msg(chat_id, wid)
-        send_msg(chat_id, "✅ Your 3 captions are ready:\n\n" + caps)
+        send_msg(chat_id, "Your 3 captions are ready:\n\n" + caps)
     except Exception as e:
         print("[document]", e)
-        edit_msg(chat_id, wid, "❌ Error: " + str(e) + "\n\nTry again bhai!")
+        edit_msg(chat_id, wid, "Error generating captions. Try again!")
 
 
 def on_text(chat_id, text):
     if not text.strip():
         return
-    w = send_msg(chat_id, "✍️ Generating captions... ⏳")
+    w   = send_msg(chat_id, "Generating captions...")
     wid = w["result"]["message_id"]
     try:
         caps = ai_text(text)
         del_msg(chat_id, wid)
-        send_msg(chat_id, "✅ Your 3 captions are ready:\n\n" + caps)
+        send_msg(chat_id, "Your 3 captions are ready:\n\n" + caps)
     except Exception as e:
         print("[text]", e)
-        edit_msg(chat_id, wid, "❌ Error: " + str(e) + "\n\nTry again bhai!")
+        edit_msg(chat_id, wid, "Error generating captions. Try again!")
 
 
 def process(update):
@@ -245,26 +253,22 @@ def process(update):
     text    = msg.get("text", "")
     caption = msg.get("caption", "")
 
-    if text == "/start":          on_start(chat_id)
-    elif "photo"    in msg:       on_photo(chat_id,    msg["photo"],    caption)
-    elif "video"    in msg:       on_video(chat_id,    msg["video"],    caption)
-    elif "document" in msg:       on_document(chat_id, msg["document"], caption)
-    elif text:                    on_text(chat_id, text)
+    if text == "/start":       on_start(chat_id)
+    elif "photo"    in msg:    on_photo(chat_id,    msg["photo"],    caption)
+    elif "video"    in msg:    on_video(chat_id,    msg["video"],    caption)
+    elif "document" in msg:    on_document(chat_id, msg["document"], caption)
+    elif text:                 on_text(chat_id, text)
 
 
 # ── MAIN ──────────────────────────────────────────────────────────
 def main():
-    print("🚀 Trading Noah Caption Bot starting...")
-    print(f"   Token  : {TOKEN[:20]}...")
-    print(f"   OpenAI : {OPENAI_KEY[:20]}...")
-    print(f"   Owner  : {OWNER_ID}")
-
-    # Clear any old webhook (ignore errors — bot might be fresh)
-    tg_safe("deleteWebhook", {"drop_pending_updates": True})
-    time.sleep(2)
-    print("✅ Ready — polling for messages...")
+    print("Trading Noah Caption Bot starting...")
+    print(f"Token loaded from env: {'YES' if TOKEN else 'NO'}")
+    print(f"OpenAI loaded from env: {'YES' if OPENAI_KEY else 'NO'}")
 
     offset = 0
+    print("Bot running — waiting for messages...")
+
     while True:
         try:
             resp = get_updates(offset)
@@ -276,21 +280,19 @@ def main():
                     print("[process error]", e)
 
         except urllib.error.HTTPError as e:
-            body = ""
-            try: body = e.read().decode()
-            except: pass
-            print(f"[HTTP {e.code}] {e.reason} — {body}")
-            if e.code == 409:
-                print("409 Conflict — another instance running, waiting 30s...")
-                time.sleep(30)
-            elif e.code == 401:
-                print("401 Unauthorized — TOKEN is wrong! Fix in Railway Variables.")
+            try:
+                body = e.read().decode()
+            except Exception:
+                body = ""
+            print(f"[HTTP {e.code}] {body}")
+            if e.code == 401:
+                print("TOKEN is wrong or revoked — fix TOKEN in Railway Variables!")
                 time.sleep(60)
-            elif e.code == 400:
-                print("400 Bad Request — skipping, retrying in 5s...")
-                time.sleep(5)
+            elif e.code == 409:
+                print("Another instance running — waiting 30s...")
+                time.sleep(30)
             else:
-                time.sleep(10)
+                time.sleep(5)
 
         except urllib.error.URLError as e:
             print(f"[network] {e} — retry in 5s")
