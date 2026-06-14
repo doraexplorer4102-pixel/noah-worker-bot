@@ -1,8 +1,6 @@
 """
 Trading Noah Caption Bot — OpenAI Vision
-- Zero external dependencies (pure Python stdlib)
-- Works on ANY Python version
-- OpenAI GPT-4o Vision for image analysis
+Pure Python stdlib. Zero dependencies. Any Python version.
 """
 import os
 import json
@@ -13,13 +11,13 @@ import urllib.error
 import time
 
 # ── CONFIG ────────────────────────────────────────────────────────
-TOKEN        = os.getenv("TOKEN",        "8942186437:AAHE30DBEMKD6ybjTkUhCOKAGceDhMyqpL8")
-OPENAI_KEY   = os.getenv("OPENAI_KEY",   "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")
-OWNER_ID     = int(os.getenv("OWNER_ID", "8004113948"))
+TOKEN      = os.getenv("TOKEN",      "8942186437:AAHE30DBEMKD6ybjTkUhCOKAGceDhMyqpL8")
+OPENAI_KEY = os.getenv("OPENAI_KEY", "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")
+OWNER_ID   = int(os.getenv("OWNER_ID", "8004113948"))
 
-TG_BASE  = f"https://api.telegram.org/bot{TOKEN}"
-TG_FILE  = f"https://api.telegram.org/file/bot{TOKEN}"
-OAI_URL  = "https://api.openai.com/v1/chat/completions"
+TG_BASE = f"https://api.telegram.org/bot{TOKEN}"
+TG_FILE = f"https://api.telegram.org/file/bot{TOKEN}"
+OAI_URL = "https://api.openai.com/v1/chat/completions"
 
 SSL_CTX = ssl.create_default_context()
 SSL_CTX.check_hostname = False
@@ -78,12 +76,12 @@ def http_get(url):
         return resp.read()
 
 
-def http_post_json(url, data, headers=None):
+def http_post_json(url, data, extra_headers=None):
     body = json.dumps(data).encode("utf-8")
-    h = {"Content-Type": "application/json", "User-Agent": "TradingNoahBot/1.0"}
-    if headers:
-        h.update(headers)
-    req = urllib.request.Request(url, data=body, headers=h, method="POST")
+    headers = {"Content-Type": "application/json", "User-Agent": "TradingNoahBot/1.0"}
+    if extra_headers:
+        headers.update(extra_headers)
+    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
     with urllib.request.urlopen(req, context=SSL_CTX, timeout=90) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
@@ -92,101 +90,83 @@ def tg_post(method, data):
     return http_post_json(f"{TG_BASE}/{method}", data)
 
 
-def tg_post_safe(method, data):
+def tg_safe(method, data):
     try:
         return tg_post(method, data)
     except Exception as e:
-        print(f"[{method}] {e}")
+        print(f"[{method} ignored] {e}")
         return None
 
 
 # ── TELEGRAM WRAPPERS ─────────────────────────────────────────────
-def send_message(chat_id, text):
-    return tg_post("sendMessage", {
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "Markdown"
-    })
+def send_msg(chat_id, text):
+    # Use plain text only — no special formatting to avoid errors
+    return tg_post("sendMessage", {"chat_id": chat_id, "text": text})
 
 
-def edit_message(chat_id, message_id, text):
-    return tg_post_safe("editMessageText", {
-        "chat_id": chat_id,
-        "message_id": message_id,
-        "text": text
-    })
+def edit_msg(chat_id, mid, text):
+    return tg_safe("editMessageText", {"chat_id": chat_id, "message_id": mid, "text": text})
 
 
-def delete_message(chat_id, message_id):
-    return tg_post_safe("deleteMessage", {
-        "chat_id": chat_id,
-        "message_id": message_id
-    })
+def del_msg(chat_id, mid):
+    return tg_safe("deleteMessage", {"chat_id": chat_id, "message_id": mid})
 
 
-def get_file(file_id):
-    result = tg_post("getFile", {"file_id": file_id})
-    return result["result"]["file_path"]
+def tg_get_file(file_id):
+    r = tg_post("getFile", {"file_id": file_id})
+    return r["result"]["file_path"]
 
 
-def download_file(file_path):
+def tg_download(file_path):
     return http_get(f"{TG_FILE}/{file_path}")
 
 
-def get_updates(offset=0, timeout=25):
-    return tg_post("getUpdates", {
-        "offset": offset,
-        "timeout": timeout,
-        "allowed_updates": ["message"]
-    })
+def get_updates(offset=0):
+    # Long polling — 20 second timeout, simple params
+    return tg_post("getUpdates", {"offset": offset, "timeout": 20})
 
 
-# ── OPENAI VISION API ─────────────────────────────────────────────
-def openai_image(image_bytes, extra=""):
-    b64 = base64.b64encode(image_bytes).decode()
+# ── OPENAI ────────────────────────────────────────────────────────
+def ai_image(img_bytes, extra=""):
+    b64 = base64.b64encode(img_bytes).decode()
     user_text = "Analyze this image and generate 3 Trading Noah Hinglish captions."
     if extra:
-        user_text += f"\nExtra context: {extra}"
-
+        user_text += " Context: " + extra
     payload = {
         "model": "gpt-4o",
         "max_tokens": 2000,
         "messages": [
             {"role": "system", "content": STYLE_PROMPT},
             {"role": "user", "content": [
-                {"type": "text",      "text": user_text},
+                {"type": "text", "text": user_text},
                 {"type": "image_url", "image_url": {
-                    "url": f"data:image/jpeg;base64,{b64}",
+                    "url": "data:image/jpeg;base64," + b64,
                     "detail": "high"
                 }}
             ]}
         ]
     }
-    result = http_post_json(OAI_URL, payload, {
-        "Authorization": f"Bearer {OPENAI_KEY}"
-    })
-    return result["choices"][0]["message"]["content"]
+    r = http_post_json(OAI_URL, payload, {"Authorization": "Bearer " + OPENAI_KEY})
+    return r["choices"][0]["message"]["content"]
 
 
-def openai_text(description):
+def ai_text(desc):
     payload = {
         "model": "gpt-4o",
         "max_tokens": 2000,
         "messages": [
             {"role": "system", "content": STYLE_PROMPT},
-            {"role": "user",   "content": "Generate 3 Trading Noah Hinglish captions for:\n\n" + description}
+            {"role": "user",   "content": "Generate 3 Trading Noah Hinglish captions for: " + desc}
         ]
     }
-    result = http_post_json(OAI_URL, payload, {
-        "Authorization": f"Bearer {OPENAI_KEY}"
-    })
-    return result["choices"][0]["message"]["content"]
+    r = http_post_json(OAI_URL, payload, {"Authorization": "Bearer " + OPENAI_KEY})
+    return r["choices"][0]["message"]["content"]
 
 
 # ── HANDLERS ──────────────────────────────────────────────────────
-def handle_start(chat_id):
-    send_message(chat_id,
-        "🔥 *Trading Noah Caption Bot*\n\n"
+def on_start(chat_id):
+    send_msg(chat_id,
+        "🔥 Trading Noah Caption Bot\n\n"
         "Send me:\n"
         "📸 Photo — 3 viral captions generated\n"
         "🎥 Video — thumbnail analyzed, captions generated\n"
@@ -195,69 +175,69 @@ def handle_start(chat_id):
     )
 
 
-def handle_photo(chat_id, photo_list, caption=""):
-    wait    = send_message(chat_id, "🔍 Analyzing photo... please wait ⏳")
-    wait_id = wait["result"]["message_id"]
+def on_photo(chat_id, photos, caption=""):
+    w = send_msg(chat_id, "🔍 Analyzing photo... please wait ⏳")
+    wid = w["result"]["message_id"]
     try:
-        best      = max(photo_list, key=lambda p: p.get("file_size", 0))
-        img_bytes = download_file(get_file(best["file_id"]))
-        captions  = openai_image(img_bytes, caption)
-        delete_message(chat_id, wait_id)
-        send_message(chat_id, "✅ *Your 3 captions are ready:*\n\n" + captions)
+        best = max(photos, key=lambda p: p.get("file_size", 0))
+        img  = tg_download(tg_get_file(best["file_id"]))
+        caps = ai_image(img, caption)
+        del_msg(chat_id, wid)
+        send_msg(chat_id, "✅ Your 3 captions are ready:\n\n" + caps)
     except Exception as e:
-        print(f"[photo error] {e}")
-        edit_message(chat_id, wait_id, "❌ Error: " + str(e) + "\n\nTry again bhai!")
+        print("[photo]", e)
+        edit_msg(chat_id, wid, "❌ Error: " + str(e) + "\n\nTry again bhai!")
 
 
-def handle_video(chat_id, video, caption=""):
-    wait    = send_message(chat_id, "🎥 Got video! Analyzing thumbnail... ⏳")
-    wait_id = wait["result"]["message_id"]
+def on_video(chat_id, video, caption=""):
+    w = send_msg(chat_id, "🎥 Got video! Analyzing thumbnail... ⏳")
+    wid = w["result"]["message_id"]
     try:
-        thumbnail = video.get("thumbnail") or video.get("thumb")
-        if thumbnail:
-            img_bytes = download_file(get_file(thumbnail["file_id"]))
-            captions  = openai_image(img_bytes, caption or "trading video")
+        thumb = video.get("thumbnail") or video.get("thumb")
+        if thumb:
+            img  = tg_download(tg_get_file(thumb["file_id"]))
+            caps = ai_image(img, caption or "trading video")
         else:
-            captions  = openai_text(caption or "trading results video, Quotex signals, wins")
-        delete_message(chat_id, wait_id)
-        send_message(chat_id, "✅ *Your 3 captions are ready:*\n\n" + captions)
+            caps = ai_text(caption or "trading results video Quotex signals wins")
+        del_msg(chat_id, wid)
+        send_msg(chat_id, "✅ Your 3 captions are ready:\n\n" + caps)
     except Exception as e:
-        print(f"[video error] {e}")
-        edit_message(chat_id, wait_id, "❌ Error: " + str(e) + "\n\nTry again bhai!")
+        print("[video]", e)
+        edit_msg(chat_id, wid, "❌ Error: " + str(e) + "\n\nTry again bhai!")
 
 
-def handle_document(chat_id, document, caption=""):
-    mime = document.get("mime_type", "")
+def on_document(chat_id, doc, caption=""):
+    mime = doc.get("mime_type", "")
     if not mime.startswith("image/"):
-        send_message(chat_id, "📸 Send photos or videos only bhai!")
+        send_msg(chat_id, "📸 Send photos or videos only bhai!")
         return
-    wait    = send_message(chat_id, "🔍 Analyzing image... ⏳")
-    wait_id = wait["result"]["message_id"]
+    w = send_msg(chat_id, "🔍 Analyzing image... ⏳")
+    wid = w["result"]["message_id"]
     try:
-        img_bytes = download_file(get_file(document["file_id"]))
-        captions  = openai_image(img_bytes, caption)
-        delete_message(chat_id, wait_id)
-        send_message(chat_id, "✅ *Your 3 captions are ready:*\n\n" + captions)
+        img  = tg_download(tg_get_file(doc["file_id"]))
+        caps = ai_image(img, caption)
+        del_msg(chat_id, wid)
+        send_msg(chat_id, "✅ Your 3 captions are ready:\n\n" + caps)
     except Exception as e:
-        print(f"[document error] {e}")
-        edit_message(chat_id, wait_id, "❌ Error: " + str(e) + "\n\nTry again bhai!")
+        print("[document]", e)
+        edit_msg(chat_id, wid, "❌ Error: " + str(e) + "\n\nTry again bhai!")
 
 
-def handle_text_msg(chat_id, text):
+def on_text(chat_id, text):
     if not text.strip():
         return
-    wait    = send_message(chat_id, "✍️ Generating captions... ⏳")
-    wait_id = wait["result"]["message_id"]
+    w = send_msg(chat_id, "✍️ Generating captions... ⏳")
+    wid = w["result"]["message_id"]
     try:
-        captions = openai_text(text)
-        delete_message(chat_id, wait_id)
-        send_message(chat_id, "✅ *Your 3 captions are ready:*\n\n" + captions)
+        caps = ai_text(text)
+        del_msg(chat_id, wid)
+        send_msg(chat_id, "✅ Your 3 captions are ready:\n\n" + caps)
     except Exception as e:
-        print(f"[text error] {e}")
-        edit_message(chat_id, wait_id, "❌ Error: " + str(e) + "\n\nTry again bhai!")
+        print("[text]", e)
+        edit_msg(chat_id, wid, "❌ Error: " + str(e) + "\n\nTry again bhai!")
 
 
-def process_update(update):
+def process(update):
     msg = update.get("message")
     if not msg:
         return
@@ -265,75 +245,59 @@ def process_update(update):
     text    = msg.get("text", "")
     caption = msg.get("caption", "")
 
-    if text == "/start":
-        handle_start(chat_id)
-    elif "photo" in msg:
-        handle_photo(chat_id, msg["photo"], caption)
-    elif "video" in msg:
-        handle_video(chat_id, msg["video"], caption)
-    elif "document" in msg:
-        handle_document(chat_id, msg["document"], caption)
-    elif text:
-        handle_text_msg(chat_id, text)
-
-
-# ── KILL OLD SESSION ──────────────────────────────────────────────
-def kill_old_session():
-    print("🔄 Clearing old Telegram sessions...")
-    tg_post_safe("deleteWebhook", {"drop_pending_updates": True})
-    time.sleep(2)
-    tg_post_safe("logOut", {})
-    time.sleep(3)
-    tg_post_safe("close", {})
-    time.sleep(5)
-    print("✅ Old session cleared")
+    if text == "/start":          on_start(chat_id)
+    elif "photo"    in msg:       on_photo(chat_id,    msg["photo"],    caption)
+    elif "video"    in msg:       on_video(chat_id,    msg["video"],    caption)
+    elif "document" in msg:       on_document(chat_id, msg["document"], caption)
+    elif text:                    on_text(chat_id, text)
 
 
 # ── MAIN ──────────────────────────────────────────────────────────
 def main():
     print("🚀 Trading Noah Caption Bot starting...")
-    print(f"   Token    : {TOKEN[:20]}...")
-    print(f"   OpenAI   : {OPENAI_KEY[:20]}...")
-    print(f"   Owner    : {OWNER_ID}")
+    print(f"   Token  : {TOKEN[:20]}...")
+    print(f"   OpenAI : {OPENAI_KEY[:20]}...")
+    print(f"   Owner  : {OWNER_ID}")
 
-    kill_old_session()
+    # Clear any old webhook (ignore errors — bot might be fresh)
+    tg_safe("deleteWebhook", {"drop_pending_updates": True})
+    time.sleep(2)
+    print("✅ Ready — polling for messages...")
 
-    offset            = 0
-    consecutive_errors = 0
-    print("✅ Bot running — waiting for messages...")
-
+    offset = 0
     while True:
         try:
-            updates = get_updates(offset=offset, timeout=25)
-            consecutive_errors = 0
-            for update in updates.get("result", []):
-                offset = update["update_id"] + 1
+            resp = get_updates(offset)
+            for upd in resp.get("result", []):
+                offset = upd["update_id"] + 1
                 try:
-                    process_update(update)
+                    process(upd)
                 except Exception as e:
-                    print(f"[process_update error] {e}")
+                    print("[process error]", e)
 
         except urllib.error.HTTPError as e:
-            consecutive_errors += 1
-            print(f"[HTTP {e.code}] {e.reason}")
+            body = ""
+            try: body = e.read().decode()
+            except: pass
+            print(f"[HTTP {e.code}] {e.reason} — {body}")
             if e.code == 409:
-                print("409 Conflict — waiting 15s then clearing session...")
-                time.sleep(15)
-                kill_old_session()
-            elif e.code == 401:
-                print("401 Unauthorized — check TOKEN in Railway Variables!")
+                print("409 Conflict — another instance running, waiting 30s...")
                 time.sleep(30)
+            elif e.code == 401:
+                print("401 Unauthorized — TOKEN is wrong! Fix in Railway Variables.")
+                time.sleep(60)
+            elif e.code == 400:
+                print("400 Bad Request — skipping, retrying in 5s...")
+                time.sleep(5)
             else:
-                time.sleep(min(5 * consecutive_errors, 60))
+                time.sleep(10)
 
         except urllib.error.URLError as e:
-            consecutive_errors += 1
-            print(f"[network error] {e} — retrying in 5s")
+            print(f"[network] {e} — retry in 5s")
             time.sleep(5)
 
         except Exception as e:
-            consecutive_errors += 1
-            print(f"[polling error] {e} — retrying in 5s")
+            print(f"[error] {e} — retry in 5s")
             time.sleep(5)
 
 
