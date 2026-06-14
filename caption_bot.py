@@ -26,7 +26,7 @@ if not GEMINI_KEY:
 
 TG_BASE    = f"https://api.telegram.org/bot{TOKEN}"
 TG_FILE    = f"https://api.telegram.org/file/bot{TOKEN}"
-GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_KEY}"
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_KEY}"
 
 SSL_CTX = ssl.create_default_context()
 SSL_CTX.check_hostname = False
