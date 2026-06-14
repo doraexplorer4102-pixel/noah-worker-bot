@@ -11,7 +11,7 @@ import urllib.error
 import time
 
 # ── CONFIG ────────────────────────────────────────────────────────
-TOKEN      = os.getenv("TOKEN",      "8942186437:AAHE30DBEMKD6ybjTkUhCOKAGceDhMyqpL8")
+TOKEN      = os.getenv("TOKEN",      "8942186437:AAGvAGbKv1kD5tXNaGoNTEqKcoZLJOdVVck")
 OPENAI_KEY = os.getenv("OPENAI_KEY", "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")
 OWNER_ID   = int(os.getenv("OWNER_ID", "8004113948"))
 
