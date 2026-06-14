@@ -2,7 +2,6 @@ import os
 import asyncio
 import httpx
 import base64
-import json
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder, MessageHandler, CommandHandler,
@@ -14,9 +13,9 @@ TOKEN = "8942186437:AAHz_eL2DcVPdvnf8JlE7duiGEyQGBUF6FI"
 GEMINI_API_KEY = "AQ.Ab8RN6L9QxPa4bcuGVcCK9rUDcBNrOKIClcUiWyrJDt7V9wZKg"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
 
-OWNER_ID = 8004113948  # Will be set on first /start
+OWNER_ID = 8004113948
 
-# ── STYLE SYSTEM PROMPT ────────────────────────────────────────────────────────
+# ── STYLE SYSTEM PROMPT ───────────────────────────────────────────
 STYLE_PROMPT = """You are a Hinglish social media caption writer for Trading Noah (@TRADELIKENOAH), India's top binary trader on Quotex.
 
 ANALYZE the image/video carefully and detect what type it is:
@@ -54,39 +53,27 @@ KEY FACTS TO USE:
 OUTPUT FORMAT - Give me 3 caption variations:
 
 CAPTION 1 - EMOTIONAL/STORY (long, personal)
-CAPTION 2 - RESULTS/PROOF (medium, data-driven)  
+CAPTION 2 - RESULTS/PROOF (medium, data-driven)
 CAPTION 3 - URGENT/CTA (short, aggressive)
 
 Each caption should be ready to copy-paste directly to Telegram/Instagram. No explanation needed, just the captions."""
 
 
 async def analyze_with_gemini(image_data: bytes, mime_type: str, extra_context: str = "") -> str:
-    """Send image to Gemini and get caption"""
     b64_image = base64.b64encode(image_data).decode("utf-8")
-
-    user_text = "Analyze this image/video thumbnail and generate 3 Trading Noah style Hinglish captions as instructed."
+    user_text = "Analyze this image and generate 3 Trading Noah style Hinglish captions as instructed."
     if extra_context:
-        user_text += f"\n\nExtra context from user: {extra_context}"
+        user_text += f"\n\nExtra context: {extra_context}"
 
     payload = {
-        "contents": [
-            {
-                "parts": [
-                    {"text": STYLE_PROMPT},
-                    {
-                        "inline_data": {
-                            "mime_type": mime_type,
-                            "data": b64_image
-                        }
-                    },
-                    {"text": user_text}
-                ]
-            }
-        ],
-        "generationConfig": {
-            "temperature": 0.9,
-            "maxOutputTokens": 2000
-        }
+        "contents": [{
+            "parts": [
+                {"text": STYLE_PROMPT},
+                {"inline_data": {"mime_type": mime_type, "data": b64_image}},
+                {"text": user_text}
+            ]
+        }],
+        "generationConfig": {"temperature": 0.9, "maxOutputTokens": 2000}
     }
 
     async with httpx.AsyncClient(timeout=60) as client:
@@ -97,20 +84,14 @@ async def analyze_with_gemini(image_data: bytes, mime_type: str, extra_context: 
 
 
 async def analyze_text_only(context_text: str) -> str:
-    """Generate caption based on text description only"""
     payload = {
-        "contents": [
-            {
-                "parts": [
-                    {"text": STYLE_PROMPT},
-                    {"text": f"Generate 3 Trading Noah style Hinglish captions for this content type/context:\n\n{context_text}"}
-                ]
-            }
-        ],
-        "generationConfig": {
-            "temperature": 0.9,
-            "maxOutputTokens": 2000
-        }
+        "contents": [{
+            "parts": [
+                {"text": STYLE_PROMPT},
+                {"text": f"Generate 3 Trading Noah style Hinglish captions for this content:\n\n{context_text}"}
+            ]
+        }],
+        "generationConfig": {"temperature": 0.9, "maxOutputTokens": 2000}
     }
 
     async with httpx.AsyncClient(timeout=60) as client:
@@ -121,7 +102,6 @@ async def analyze_text_only(context_text: str) -> str:
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
     await update.message.reply_text(
         "🔥 *Trading Noah Caption Bot Ready!*\n\n"
         "Send me:\n"
@@ -135,98 +115,71 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
-
-    # Get caption text if any
     extra_context = update.message.caption or ""
-
     thinking_msg = await update.message.reply_text("🔍 Analyzing image... generating captions ⏳")
-
     try:
-        # Download photo (highest quality)
         photo = update.message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
         image_data = await file.download_as_bytearray()
-
         captions = await analyze_with_gemini(bytes(image_data), "image/jpeg", extra_context)
-
         await thinking_msg.delete()
         await update.message.reply_text(
             f"✅ *Here are your 3 captions:*\n\n{captions}",
             parse_mode=ParseMode.MARKDOWN
         )
-
     except Exception as e:
         await thinking_msg.edit_text(f"❌ Error: {e}\n\nTry again bhai!")
         print(f"Photo handler error: {e}")
 
 
 async def video_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
     extra_context = update.message.caption or ""
-
     thinking_msg = await update.message.reply_text("🎥 Video received! Analyzing thumbnail... ⏳")
-
     try:
-        # Get video thumbnail for analysis
         video = update.message.video
         if video.thumbnail:
             file = await context.bot.get_file(video.thumbnail.file_id)
             image_data = await file.download_as_bytearray()
-            captions = await analyze_with_gemini(bytes(image_data), "image/jpeg", extra_context or "This is a trading video")
+            captions = await analyze_with_gemini(bytes(image_data), "image/jpeg", extra_context or "trading video")
         else:
-            # No thumbnail — use text context
             desc = extra_context or "trading results video, wins, Quotex signals"
             captions = await analyze_text_only(desc)
-
         await thinking_msg.delete()
         await update.message.reply_text(
             f"✅ *Here are your 3 captions:*\n\n{captions}",
             parse_mode=ParseMode.MARKDOWN
         )
-
     except Exception as e:
         await thinking_msg.edit_text(f"❌ Error: {e}\n\nTry again bhai!")
         print(f"Video handler error: {e}")
 
 
 async def document_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle files sent as documents (uncompressed)"""
     doc = update.message.document
     extra_context = update.message.caption or ""
-
     if not doc.mime_type or not doc.mime_type.startswith("image/"):
         await update.message.reply_text("📸 Please send photos or videos only bhai!")
         return
-
     thinking_msg = await update.message.reply_text("🔍 Analyzing image... generating captions ⏳")
-
     try:
         file = await context.bot.get_file(doc.file_id)
         image_data = await file.download_as_bytearray()
         captions = await analyze_with_gemini(bytes(image_data), doc.mime_type, extra_context)
-
         await thinking_msg.delete()
         await update.message.reply_text(
             f"✅ *Here are your 3 captions:*\n\n{captions}",
             parse_mode=ParseMode.MARKDOWN
         )
-
     except Exception as e:
         await thinking_msg.edit_text(f"❌ Error: {e}\n\nTry again bhai!")
         print(f"Document handler error: {e}")
 
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle text descriptions to generate captions"""
     text = update.message.text.strip()
-
     if text.startswith("/"):
         return
-
     thinking_msg = await update.message.reply_text("✍️ Generating captions... ⏳")
-
     try:
         captions = await analyze_text_only(text)
         await thinking_msg.delete()
@@ -242,14 +195,12 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def main():
     print("🚀 Trading Noah Caption Bot starting...")
     app = ApplicationBuilder().token(TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
     app.add_handler(MessageHandler(filters.VIDEO, video_handler))
     app.add_handler(MessageHandler(filters.Document.ALL, document_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
-
-    print("✅ Bot running! Send a photo or video to generate captions.")
+    print("✅ Bot running!")
     await app.run_polling(drop_pending_updates=True)
 
 
