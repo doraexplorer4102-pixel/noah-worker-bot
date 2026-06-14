@@ -1,22 +1,18 @@
 """
 Trading Noah Caption Bot
 - Zero external dependencies (pure Python stdlib only)
-- Works on any Python version (3.8 to 3.13+)
-- Uses Telegram Bot API via urllib
-- Uses Gemini Vision API for image/video analysis
+- Works on any Python version
 """
 import os
 import json
 import base64
 import ssl
 import urllib.request
-import urllib.parse
 import urllib.error
 import time
-from typing import Optional
 
 # ── CONFIG ────────────────────────────────────────────────────────
-TOKEN          = os.getenv("TOKEN", "8942186437:AAHz_eL2DcVPdvnf8JlE7duiGEyQGBUF6FI")
+TOKEN          = os.getenv("TOKEN", "8942186437:AAHE30DBEMKD6ybjTkUhCOKAGceDhMyqpL8")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AQ.Ab8RN6L9QxPa4bcuGVcCK9rUDcBNrOKIClcUiWyrJDt7V9wZKg")
 OWNER_ID       = int(os.getenv("OWNER_ID", "8004113948"))
 
@@ -27,7 +23,6 @@ GEMINI_URL = (
     f"gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
 )
 
-# SSL context
 SSL_CTX = ssl.create_default_context()
 SSL_CTX.check_hostname = False
 SSL_CTX.verify_mode = ssl.CERT_NONE
@@ -44,7 +39,7 @@ ANALYZE the image carefully and detect what type it is:
 - VIP JOIN PROCESS: step by step, urgent CTA
 - BONUS/OFFER: highlight promo code NOAH50, urgency
 
-WRITING STYLE RULES (strictly follow):
+WRITING STYLE RULES:
 1. Mix Hindi + English naturally (Hinglish)
 2. Emotional and personal tone - speak directly to bhai/tu/tum
 3. Use CAPS for urgency on key words
@@ -78,18 +73,17 @@ CAPTION 3 - URGENT/CTA
 Ready to copy-paste. No extra explanation."""
 
 
-# ── HTTP HELPERS (pure stdlib) ────────────────────────────────────
-def http_get(url: str) -> bytes:
+# ── HTTP HELPERS ──────────────────────────────────────────────────
+def http_get(url):
     req = urllib.request.Request(url, headers={"User-Agent": "TradingNoahBot/1.0"})
     with urllib.request.urlopen(req, context=SSL_CTX, timeout=30) as resp:
         return resp.read()
 
 
-def http_post_json(url: str, data: dict) -> dict:
+def http_post_json(url, data):
     body = json.dumps(data).encode("utf-8")
     req = urllib.request.Request(
-        url,
-        data=body,
+        url, data=body,
         headers={"Content-Type": "application/json", "User-Agent": "TradingNoahBot/1.0"},
         method="POST"
     )
@@ -97,12 +91,21 @@ def http_post_json(url: str, data: dict) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def tg_post(method: str, data: dict) -> dict:
+def tg_post(method, data):
     return http_post_json(f"{TG_BASE}/{method}", data)
 
 
-# ── TELEGRAM API WRAPPERS ─────────────────────────────────────────
-def send_message(chat_id: int, text: str) -> dict:
+def tg_post_safe(method, data):
+    """Same as tg_post but never raises — returns None on error"""
+    try:
+        return tg_post(method, data)
+    except Exception as e:
+        print(f"[{method}] {e}")
+        return None
+
+
+# ── TELEGRAM WRAPPERS ─────────────────────────────────────────────
+def send_message(chat_id, text):
     return tg_post("sendMessage", {
         "chat_id": chat_id,
         "text": text,
@@ -110,31 +113,31 @@ def send_message(chat_id: int, text: str) -> dict:
     })
 
 
-def edit_message(chat_id: int, message_id: int, text: str) -> dict:
-    return tg_post("editMessageText", {
+def edit_message(chat_id, message_id, text):
+    return tg_post_safe("editMessageText", {
         "chat_id": chat_id,
         "message_id": message_id,
         "text": text
     })
 
 
-def delete_message(chat_id: int, message_id: int) -> dict:
-    return tg_post("deleteMessage", {
+def delete_message(chat_id, message_id):
+    return tg_post_safe("deleteMessage", {
         "chat_id": chat_id,
         "message_id": message_id
     })
 
 
-def get_file(file_id: str) -> str:
+def get_file(file_id):
     result = tg_post("getFile", {"file_id": file_id})
     return result["result"]["file_path"]
 
 
-def download_file(file_path: str) -> bytes:
+def download_file(file_path):
     return http_get(f"{TG_FILE}/{file_path}")
 
 
-def get_updates(offset: int = 0, timeout: int = 30) -> dict:
+def get_updates(offset=0, timeout=25):
     return tg_post("getUpdates", {
         "offset": offset,
         "timeout": timeout,
@@ -143,58 +146,53 @@ def get_updates(offset: int = 0, timeout: int = 30) -> dict:
 
 
 # ── GEMINI API ────────────────────────────────────────────────────
-def gemini_image(image_bytes: bytes, mime_type: str, extra: str = "") -> str:
+def gemini_image(image_bytes, mime_type, extra=""):
     b64 = base64.b64encode(image_bytes).decode()
     user_text = "Analyze this image and generate 3 Trading Noah Hinglish captions."
     if extra:
         user_text += f"\nExtra context: {extra}"
     payload = {
-        "contents": [{
-            "parts": [
-                {"text": STYLE_PROMPT},
-                {"inline_data": {"mime_type": mime_type, "data": b64}},
-                {"text": user_text},
-            ]
-        }],
+        "contents": [{"parts": [
+            {"text": STYLE_PROMPT},
+            {"inline_data": {"mime_type": mime_type, "data": b64}},
+            {"text": user_text},
+        ]}],
         "generationConfig": {"temperature": 0.9, "maxOutputTokens": 2000},
     }
     result = http_post_json(GEMINI_URL, payload)
     return result["candidates"][0]["content"]["parts"][0]["text"]
 
 
-def gemini_text(description: str) -> str:
+def gemini_text(description):
     payload = {
-        "contents": [{
-            "parts": [
-                {"text": STYLE_PROMPT},
-                {"text": f"Generate 3 Trading Noah Hinglish captions for:\n\n{description}"},
-            ]
-        }],
+        "contents": [{"parts": [
+            {"text": STYLE_PROMPT},
+            {"text": "Generate 3 Trading Noah Hinglish captions for:\n\n" + description},
+        ]}],
         "generationConfig": {"temperature": 0.9, "maxOutputTokens": 2000},
     }
     result = http_post_json(GEMINI_URL, payload)
     return result["candidates"][0]["content"]["parts"][0]["text"]
 
 
-# ── MESSAGE HANDLERS ──────────────────────────────────────────────
-def handle_start(chat_id: int):
+# ── HANDLERS ─────────────────────────────────────────────────────
+def handle_start(chat_id):
     send_message(chat_id,
         "🔥 *Trading Noah Caption Bot*\n\n"
         "Send me:\n"
-        "📸 Photo — I analyze & generate 3 viral captions\n"
-        "🎥 Video — I analyze thumbnail & generate captions\n"
-        "✍️ Text — Describe content, I generate captions\n\n"
+        "📸 Photo — 3 viral captions generated\n"
+        "🎥 Video — thumbnail analyzed, captions generated\n"
+        "✍️ Text — describe content, captions generated\n\n"
         "Ready to copy-paste in your style! 🚀"
     )
 
 
-def handle_photo(chat_id: int, photo_list: list, caption: str = ""):
+def handle_photo(chat_id, photo_list, caption=""):
     wait = send_message(chat_id, "🔍 Analyzing photo... please wait ⏳")
     wait_id = wait["result"]["message_id"]
     try:
         best = max(photo_list, key=lambda p: p.get("file_size", 0))
-        file_path = get_file(best["file_id"])
-        img_bytes = download_file(file_path)
+        img_bytes = download_file(get_file(best["file_id"]))
         captions = gemini_image(img_bytes, "image/jpeg", caption)
         delete_message(chat_id, wait_id)
         send_message(chat_id, "✅ *Your 3 captions are ready:*\n\n" + captions)
@@ -203,14 +201,13 @@ def handle_photo(chat_id: int, photo_list: list, caption: str = ""):
         edit_message(chat_id, wait_id, "❌ Error: " + str(e) + "\n\nTry again bhai!")
 
 
-def handle_video(chat_id: int, video: dict, caption: str = ""):
+def handle_video(chat_id, video, caption=""):
     wait = send_message(chat_id, "🎥 Got video! Analyzing thumbnail... ⏳")
     wait_id = wait["result"]["message_id"]
     try:
         thumbnail = video.get("thumbnail") or video.get("thumb")
         if thumbnail:
-            file_path = get_file(thumbnail["file_id"])
-            img_bytes = download_file(file_path)
+            img_bytes = download_file(get_file(thumbnail["file_id"]))
             captions = gemini_image(img_bytes, "image/jpeg", caption or "trading video")
         else:
             captions = gemini_text(caption or "trading results video, Quotex signals, wins")
@@ -221,7 +218,7 @@ def handle_video(chat_id: int, video: dict, caption: str = ""):
         edit_message(chat_id, wait_id, "❌ Error: " + str(e) + "\n\nTry again bhai!")
 
 
-def handle_document(chat_id: int, document: dict, caption: str = ""):
+def handle_document(chat_id, document, caption=""):
     mime = document.get("mime_type", "")
     if not mime.startswith("image/"):
         send_message(chat_id, "📸 Send photos or videos only bhai!")
@@ -229,8 +226,7 @@ def handle_document(chat_id: int, document: dict, caption: str = ""):
     wait = send_message(chat_id, "🔍 Analyzing image... ⏳")
     wait_id = wait["result"]["message_id"]
     try:
-        file_path = get_file(document["file_id"])
-        img_bytes = download_file(file_path)
+        img_bytes = download_file(get_file(document["file_id"]))
         captions = gemini_image(img_bytes, mime, caption)
         delete_message(chat_id, wait_id)
         send_message(chat_id, "✅ *Your 3 captions are ready:*\n\n" + captions)
@@ -239,7 +235,7 @@ def handle_document(chat_id: int, document: dict, caption: str = ""):
         edit_message(chat_id, wait_id, "❌ Error: " + str(e) + "\n\nTry again bhai!")
 
 
-def handle_text_msg(chat_id: int, text: str):
+def handle_text_msg(chat_id, text):
     if not text.strip():
         return
     wait = send_message(chat_id, "✍️ Generating captions... ⏳")
@@ -253,8 +249,7 @@ def handle_text_msg(chat_id: int, text: str):
         edit_message(chat_id, wait_id, "❌ Error: " + str(e) + "\n\nTry again bhai!")
 
 
-# ── PROCESS ONE UPDATE ────────────────────────────────────────────
-def process_update(update: dict):
+def process_update(update):
     msg = update.get("message")
     if not msg:
         return
@@ -264,54 +259,85 @@ def process_update(update: dict):
 
     if text == "/start":
         handle_start(chat_id)
-        return
-    if "photo" in msg:
+    elif "photo" in msg:
         handle_photo(chat_id, msg["photo"], caption)
-        return
-    if "video" in msg:
+    elif "video" in msg:
         handle_video(chat_id, msg["video"], caption)
-        return
-    if "document" in msg:
+    elif "document" in msg:
         handle_document(chat_id, msg["document"], caption)
-        return
-    if text:
+    elif text:
         handle_text_msg(chat_id, text)
-        return
 
 
-# ── MAIN POLLING LOOP ─────────────────────────────────────────────
+# ── STARTUP: KILL OLD SESSION ─────────────────────────────────────
+def kill_old_session():
+    """
+    Fully clears any existing Telegram session before polling.
+    This prevents 409 Conflict errors.
+    """
+    print("🔄 Clearing old sessions...")
+
+    # 1. Delete webhook (clears webhook mode)
+    tg_post_safe("deleteWebhook", {"drop_pending_updates": True})
+    time.sleep(2)
+
+    # 2. logOut kicks any other polling session off
+    tg_post_safe("logOut", {})
+    time.sleep(3)
+
+    # 3. close terminates the current server connection
+    tg_post_safe("close", {})
+    time.sleep(5)
+
+    print("✅ Old session cleared — starting fresh")
+
+
+# ── MAIN ──────────────────────────────────────────────────────────
 def main():
     print("🚀 Trading Noah Caption Bot starting...")
     print(f"   Token  : {TOKEN[:20]}...")
     print(f"   Gemini : {GEMINI_API_KEY[:20]}...")
     print(f"   Owner  : {OWNER_ID}")
 
-    # Step 1: Delete any existing webhook to avoid 409 conflict
-    try:
-        tg_post("deleteWebhook", {"drop_pending_updates": True})
-        print("✅ Webhook deleted — conflict cleared")
-    except Exception as e:
-        print(f"[deleteWebhook] {e}")
-
-    # Step 2: Wait 3 seconds for Telegram to release the session
-    time.sleep(3)
+    kill_old_session()
 
     offset = 0
+    consecutive_errors = 0
     print("✅ Bot running — waiting for messages...")
 
     while True:
         try:
-            updates = get_updates(offset=offset, timeout=30)
+            updates = get_updates(offset=offset, timeout=25)
+            consecutive_errors = 0
             for update in updates.get("result", []):
                 offset = update["update_id"] + 1
                 try:
                     process_update(update)
                 except Exception as e:
                     print(f"[process_update error] {e}")
+
+        except urllib.error.HTTPError as e:
+            consecutive_errors += 1
+            print(f"[HTTP error] {e.code} {e.reason}")
+            if e.code == 409:
+                # Another instance running — wait longer then retry
+                print("409 Conflict — waiting 15s then retrying...")
+                time.sleep(15)
+                kill_old_session()
+            elif e.code == 401:
+                print("401 Unauthorized — check your TOKEN in Railway Variables!")
+                time.sleep(30)
+            else:
+                wait = min(5 * consecutive_errors, 60)
+                time.sleep(wait)
+
         except urllib.error.URLError as e:
+            consecutive_errors += 1
             print(f"[network error] {e} — retrying in 5s")
             time.sleep(5)
+
         except Exception as e:
+            consecutive_errors += 1
             print(f"[polling error] {e} — retrying in 5s")
             time.sleep(5)
 
