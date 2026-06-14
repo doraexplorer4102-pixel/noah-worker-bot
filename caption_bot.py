@@ -14,7 +14,7 @@ TOKEN = "8942186437:AAHz_eL2DcVPdvnf8JlE7duiGEyQGBUF6FI"
 GEMINI_API_KEY = "AQ.Ab8RN6L9QxPa4bcuGVcCK9rUDcBNrOKIClcUiWyrJDt7V9wZKg"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
 
-OWNER_ID = 8942186437  # Will be set on first /start
+OWNER_ID = 8004113948  # Will be set on first /start
 
 # ── STYLE SYSTEM PROMPT ────────────────────────────────────────────────────────
 STYLE_PROMPT = """You are a Hinglish social media caption writer for Trading Noah (@TRADELIKENOAH), India's top binary trader on Quotex.
