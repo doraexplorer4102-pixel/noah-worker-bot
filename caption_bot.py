@@ -1,7 +1,7 @@
 """
-Trading Noah Caption Bot — OpenAI Vision
+Trading Noah Caption Bot — Gemini Vision
 Pure Python stdlib. Zero dependencies. Any Python version.
-TOKEN and OPENAI_KEY must be set in Railway Environment Variables.
+TOKEN and GEMINI_KEY must be set in Railway Environment Variables.
 """
 import os
 import json
@@ -12,22 +12,21 @@ import urllib.error
 import time
 import sys
 
-# ── CONFIG — ALL FROM ENVIRONMENT VARIABLES ONLY ─────────────────
+# ── CONFIG — FROM ENVIRONMENT VARIABLES ONLY ─────────────────────
 TOKEN      = os.environ.get("TOKEN")
-OPENAI_KEY = os.environ.get("OPENAI_KEY")
+GEMINI_KEY = os.environ.get("GEMINI_KEY")
 OWNER_ID   = os.environ.get("OWNER_ID", "8004113948")
 
-# Crash immediately if token missing — clear error message
 if not TOKEN:
-    print("❌ ERROR: TOKEN environment variable not set in Railway!")
+    print("ERROR: TOKEN not set in Railway Variables!")
     sys.exit(1)
-if not OPENAI_KEY:
-    print("❌ ERROR: OPENAI_KEY environment variable not set in Railway!")
+if not GEMINI_KEY:
+    print("ERROR: GEMINI_KEY not set in Railway Variables!")
     sys.exit(1)
 
-TG_BASE = f"https://api.telegram.org/bot{TOKEN}"
-TG_FILE = f"https://api.telegram.org/file/bot{TOKEN}"
-OAI_URL = "https://api.openai.com/v1/chat/completions"
+TG_BASE    = f"https://api.telegram.org/bot{TOKEN}"
+TG_FILE    = f"https://api.telegram.org/file/bot{TOKEN}"
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_KEY}"
 
 SSL_CTX = ssl.create_default_context()
 SSL_CTX.check_hostname = False
@@ -134,41 +133,34 @@ def get_updates(offset=0):
     return tg_post("getUpdates", {"offset": offset, "timeout": 20})
 
 
-# ── OPENAI VISION ─────────────────────────────────────────────────
+# ── GEMINI VISION API ─────────────────────────────────────────────
 def ai_image(img_bytes, extra=""):
     b64 = base64.b64encode(img_bytes).decode()
     user_text = "Analyze this image and generate 3 Trading Noah Hinglish captions."
     if extra:
         user_text += " Context: " + extra
     payload = {
-        "model": "gpt-4o",
-        "max_tokens": 2000,
-        "messages": [
-            {"role": "system", "content": STYLE_PROMPT},
-            {"role": "user", "content": [
-                {"type": "text", "text": user_text},
-                {"type": "image_url", "image_url": {
-                    "url": "data:image/jpeg;base64," + b64,
-                    "detail": "high"
-                }}
-            ]}
-        ]
+        "contents": [{
+            "parts": [
+                {"text": STYLE_PROMPT + "\n\n" + user_text},
+                {"inline_data": {"mime_type": "image/jpeg", "data": b64}}
+            ]
+        }],
+        "generationConfig": {"temperature": 0.9, "maxOutputTokens": 2000}
     }
-    r = http_post_json(OAI_URL, payload, {"Authorization": "Bearer " + OPENAI_KEY})
-    return r["choices"][0]["message"]["content"]
+    r = http_post_json(GEMINI_URL, payload)
+    return r["candidates"][0]["content"]["parts"][0]["text"]
 
 
 def ai_text(desc):
     payload = {
-        "model": "gpt-4o",
-        "max_tokens": 2000,
-        "messages": [
-            {"role": "system", "content": STYLE_PROMPT},
-            {"role": "user", "content": "Generate 3 Trading Noah Hinglish captions for: " + desc}
-        ]
+        "contents": [{
+            "parts": [{"text": STYLE_PROMPT + "\n\nGenerate 3 Trading Noah Hinglish captions for: " + desc}]
+        }],
+        "generationConfig": {"temperature": 0.9, "maxOutputTokens": 2000}
     }
-    r = http_post_json(OAI_URL, payload, {"Authorization": "Bearer " + OPENAI_KEY})
-    return r["choices"][0]["message"]["content"]
+    r = http_post_json(GEMINI_URL, payload)
+    return r["candidates"][0]["content"]["parts"][0]["text"]
 
 
 # ── HANDLERS ──────────────────────────────────────────────────────
@@ -194,7 +186,7 @@ def on_photo(chat_id, photos, caption=""):
         send_msg(chat_id, "Your 3 captions are ready:\n\n" + caps)
     except Exception as e:
         print("[photo]", e)
-        edit_msg(chat_id, wid, "Error generating captions. Try again!")
+        edit_msg(chat_id, wid, "Error: " + str(e) + "\n\nTry again!")
 
 
 def on_video(chat_id, video, caption=""):
@@ -211,7 +203,7 @@ def on_video(chat_id, video, caption=""):
         send_msg(chat_id, "Your 3 captions are ready:\n\n" + caps)
     except Exception as e:
         print("[video]", e)
-        edit_msg(chat_id, wid, "Error generating captions. Try again!")
+        edit_msg(chat_id, wid, "Error: " + str(e) + "\n\nTry again!")
 
 
 def on_document(chat_id, doc, caption=""):
@@ -228,7 +220,7 @@ def on_document(chat_id, doc, caption=""):
         send_msg(chat_id, "Your 3 captions are ready:\n\n" + caps)
     except Exception as e:
         print("[document]", e)
-        edit_msg(chat_id, wid, "Error generating captions. Try again!")
+        edit_msg(chat_id, wid, "Error: " + str(e) + "\n\nTry again!")
 
 
 def on_text(chat_id, text):
@@ -242,7 +234,7 @@ def on_text(chat_id, text):
         send_msg(chat_id, "Your 3 captions are ready:\n\n" + caps)
     except Exception as e:
         print("[text]", e)
-        edit_msg(chat_id, wid, "Error generating captions. Try again!")
+        edit_msg(chat_id, wid, "Error: " + str(e) + "\n\nTry again!")
 
 
 def process(update):
@@ -263,8 +255,8 @@ def process(update):
 # ── MAIN ──────────────────────────────────────────────────────────
 def main():
     print("Trading Noah Caption Bot starting...")
-    print(f"Token loaded from env: {'YES' if TOKEN else 'NO'}")
-    print(f"OpenAI loaded from env: {'YES' if OPENAI_KEY else 'NO'}")
+    print(f"Token: {'OK' if TOKEN else 'MISSING'}")
+    print(f"Gemini: {'OK' if GEMINI_KEY else 'MISSING'}")
 
     offset = 0
     print("Bot running — waiting for messages...")
@@ -280,13 +272,11 @@ def main():
                     print("[process error]", e)
 
         except urllib.error.HTTPError as e:
-            try:
-                body = e.read().decode()
-            except Exception:
-                body = ""
+            try: body = e.read().decode()
+            except: body = ""
             print(f"[HTTP {e.code}] {body}")
             if e.code == 401:
-                print("TOKEN is wrong or revoked — fix TOKEN in Railway Variables!")
+                print("TOKEN wrong or revoked — fix in Railway Variables!")
                 time.sleep(60)
             elif e.code == 409:
                 print("Another instance running — waiting 30s...")
