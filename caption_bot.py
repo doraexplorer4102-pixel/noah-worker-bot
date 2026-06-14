@@ -1,26 +1,37 @@
+"""
+Trading Noah Caption Bot
+- Zero external dependencies (pure Python stdlib only)
+- Works on Python 3.8, 3.9, 3.10, 3.11, 3.12, 3.13 - any version
+- Uses Telegram Bot API via urllib (no python-telegram-bot needed)
+- Uses Gemini Vision API for image/video analysis
+"""
 import os
-import asyncio
-import httpx
+import json
 import base64
-from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder,
-    MessageHandler,
-    CommandHandler,
-    ContextTypes,
-    filters,
-)
-from telegram.constants import ParseMode
+import asyncio
+import ssl
+import urllib.request
+import urllib.parse
+import urllib.error
+import time
+from typing import Optional
 
 # ── CONFIG ────────────────────────────────────────────────────────
-TOKEN          = "8942186437:AAHz_eL2DcVPdvnf8JlE7duiGEyQGBUF6FI"
-GEMINI_API_KEY = "AQ.Ab8RN6L9QxPa4bcuGVcCK9rUDcBNrOKIClcUiWyrJDt7V9wZKg"
-OWNER_ID       = 8004113948
+TOKEN          = os.getenv("TOKEN", "8942186437:AAHz_eL2DcVPdvnf8JlE7duiGEyQGBUF6FI")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "AQ.Ab8RN6L9QxPa4bcuGVcCK9rUDcBNrOKIClcUiWyrJDt7V9wZKg")
+OWNER_ID       = int(os.getenv("OWNER_ID", "8004113948"))
 
+TG_BASE    = f"https://api.telegram.org/bot{TOKEN}"
+TG_FILE    = f"https://api.telegram.org/file/bot{TOKEN}"
 GEMINI_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
-    "gemini-1.5-flash:generateContent?key=" + GEMINI_API_KEY
+    f"gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
 )
+
+# SSL context - skip verification issues
+SSL_CTX = ssl.create_default_context()
+SSL_CTX.check_hostname = False
+SSL_CTX.verify_mode = ssl.CERT_NONE
 
 # ── STYLE PROMPT ──────────────────────────────────────────────────
 STYLE_PROMPT = """You are a Hinglish social media caption writer for Trading Noah (@TRADELIKENOAH), India's top binary trader on Quotex.
@@ -54,7 +65,7 @@ KEY FACTS:
 - Accuracy: 93-96%
 - Contact: @TRADELIKENOAH
 
-OUTPUT: Give exactly 3 caption variations with these headers:
+OUTPUT: Give exactly 3 caption variations:
 
 CAPTION 1 - EMOTIONAL/STORY
 [caption here]
@@ -68,8 +79,73 @@ CAPTION 3 - URGENT/CTA
 Ready to copy-paste. No extra explanation."""
 
 
-# ── GEMINI CALLS ──────────────────────────────────────────────────
-async def analyze_image(image_bytes: bytes, mime_type: str, extra: str = "") -> str:
+# ── HTTP HELPERS (pure stdlib) ─────────────────────────────────────
+def http_get(url: str) -> bytes:
+    req = urllib.request.Request(url, headers={"User-Agent": "TradingNoahBot/1.0"})
+    with urllib.request.urlopen(req, context=SSL_CTX, timeout=30) as resp:
+        return resp.read()
+
+
+def http_post_json(url: str, data: dict) -> dict:
+    body = json.dumps(data).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={"Content-Type": "application/json", "User-Agent": "TradingNoahBot/1.0"},
+        method="POST"
+    )
+    with urllib.request.urlopen(req, context=SSL_CTX, timeout=60) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def tg_post(method: str, data: dict) -> dict:
+    return http_post_json(f"{TG_BASE}/{method}", data)
+
+
+# ── TELEGRAM API WRAPPERS ─────────────────────────────────────────
+def send_message(chat_id: int, text: str) -> dict:
+    return tg_post("sendMessage", {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "Markdown"
+    })
+
+
+def edit_message(chat_id: int, message_id: int, text: str) -> dict:
+    return tg_post("editMessageText", {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "text": text
+    })
+
+
+def delete_message(chat_id: int, message_id: int) -> dict:
+    return tg_post("deleteMessage", {
+        "chat_id": chat_id,
+        "message_id": message_id
+    })
+
+
+def get_file(file_id: str) -> str:
+    """Returns file path on Telegram servers"""
+    result = tg_post("getFile", {"file_id": file_id})
+    return result["result"]["file_path"]
+
+
+def download_file(file_path: str) -> bytes:
+    return http_get(f"{TG_FILE}/{file_path}")
+
+
+def get_updates(offset: int = 0, timeout: int = 30) -> dict:
+    return tg_post("getUpdates", {
+        "offset": offset,
+        "timeout": timeout,
+        "allowed_updates": ["message"]
+    })
+
+
+# ── GEMINI API ────────────────────────────────────────────────────
+def gemini_image(image_bytes: bytes, mime_type: str, extra: str = "") -> str:
     b64 = base64.b64encode(image_bytes).decode()
     user_text = "Analyze this image and generate 3 Trading Noah Hinglish captions."
     if extra:
@@ -85,13 +161,11 @@ async def analyze_image(image_bytes: bytes, mime_type: str, extra: str = "") -> 
         }],
         "generationConfig": {"temperature": 0.9, "maxOutputTokens": 2000},
     }
-    async with httpx.AsyncClient(timeout=60) as client:
-        r = await client.post(GEMINI_URL, json=payload)
-        r.raise_for_status()
-        return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+    result = http_post_json(GEMINI_URL, payload)
+    return result["candidates"][0]["content"]["parts"][0]["text"]
 
 
-async def analyze_text(description: str) -> str:
+def gemini_text(description: str) -> str:
     payload = {
         "contents": [{
             "parts": [
@@ -101,111 +175,150 @@ async def analyze_text(description: str) -> str:
         }],
         "generationConfig": {"temperature": 0.9, "maxOutputTokens": 2000},
     }
-    async with httpx.AsyncClient(timeout=60) as client:
-        r = await client.post(GEMINI_URL, json=payload)
-        r.raise_for_status()
-        return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+    result = http_post_json(GEMINI_URL, payload)
+    return result["candidates"][0]["content"]["parts"][0]["text"]
 
 
-# ── HELPERS ───────────────────────────────────────────────────────
-async def send_captions(msg, captions: str):
-    await msg.reply_text(
-        "✅ *Your 3 captions are ready:*\n\n" + captions,
-        parse_mode=ParseMode.MARKDOWN,
-    )
-
-
-# ── HANDLERS ──────────────────────────────────────────────────────
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
+# ── MESSAGE HANDLERS ──────────────────────────────────────────────
+def handle_start(chat_id: int):
+    send_message(chat_id,
         "🔥 *Trading Noah Caption Bot*\n\n"
         "Send me:\n"
         "📸 Photo — I analyze & generate 3 viral captions\n"
         "🎥 Video — I analyze thumbnail & generate captions\n"
         "✍️ Text — Describe content, I generate captions\n\n"
-        "Captions are in your Trading Noah Hinglish style, ready to copy-paste! 🚀",
-        parse_mode=ParseMode.MARKDOWN,
+        "Captions are in your Trading Noah Hinglish style, ready to copy-paste\\! 🚀"
     )
 
 
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    extra = update.message.caption or ""
-    wait = await update.message.reply_text("🔍 Analyzing photo... please wait ⏳")
+def handle_photo(chat_id: int, photo_list: list, caption: str = ""):
+    wait = send_message(chat_id, "🔍 Analyzing photo... please wait ⏳")
+    wait_id = wait["result"]["message_id"]
     try:
-        photo_file = await context.bot.get_file(update.message.photo[-1].file_id)
-        img_bytes = bytes(await photo_file.download_as_bytearray())
-        captions = await analyze_image(img_bytes, "image/jpeg", extra)
-        await wait.delete()
-        await send_captions(update.message, captions)
+        # Get highest resolution photo
+        best = max(photo_list, key=lambda p: p.get("file_size", 0))
+        file_path = get_file(best["file_id"])
+        img_bytes = download_file(file_path)
+        captions = gemini_image(img_bytes, "image/jpeg", caption)
+        delete_message(chat_id, wait_id)
+        send_message(chat_id, f"✅ *Your 3 captions are ready:*\n\n{captions}")
     except Exception as e:
-        print(f"[photo] {e}")
-        await wait.edit_text(f"❌ Something went wrong: {e}\n\nTry again bhai!")
+        print(f"[photo error] {e}")
+        edit_message(chat_id, wait_id, f"❌ Error: {e}\n\nTry again bhai!")
 
 
-async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    extra = update.message.caption or ""
-    wait = await update.message.reply_text("🎥 Got video! Analyzing thumbnail... ⏳")
+def handle_video(chat_id: int, video: dict, caption: str = ""):
+    wait = send_message(chat_id, "🎥 Got video! Analyzing thumbnail... ⏳")
+    wait_id = wait["result"]["message_id"]
     try:
-        video = update.message.video
-        if video.thumbnail:
-            thumb_file = await context.bot.get_file(video.thumbnail.file_id)
-            img_bytes = bytes(await thumb_file.download_as_bytearray())
-            captions = await analyze_image(img_bytes, "image/jpeg", extra or "trading video")
+        thumbnail = video.get("thumbnail") or video.get("thumb")
+        if thumbnail:
+            file_path = get_file(thumbnail["file_id"])
+            img_bytes = download_file(file_path)
+            captions = gemini_image(img_bytes, "image/jpeg", caption or "trading video")
         else:
-            captions = await analyze_text(extra or "trading results video, Quotex signals, wins")
-        await wait.delete()
-        await send_captions(update.message, captions)
+            captions = gemini_text(caption or "trading results video, Quotex signals, wins")
+        delete_message(chat_id, wait_id)
+        send_message(chat_id, f"✅ *Your 3 captions are ready:*\n\n{captions}")
     except Exception as e:
-        print(f"[video] {e}")
-        await wait.edit_text(f"❌ Something went wrong: {e}\n\nTry again bhai!")
+        print(f"[video error] {e}")
+        edit_message(chat_id, wait_id, f"❌ Error: {e}\n\nTry again bhai!")
 
 
-async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    doc = update.message.document
-    extra = update.message.caption or ""
-    if not doc.mime_type or not doc.mime_type.startswith("image/"):
-        await update.message.reply_text("📸 Send photos or videos only bhai!")
+def handle_document(chat_id: int, document: dict, caption: str = ""):
+    mime = document.get("mime_type", "")
+    if not mime.startswith("image/"):
+        send_message(chat_id, "📸 Send photos or videos only bhai!")
         return
-    wait = await update.message.reply_text("🔍 Analyzing image... ⏳")
+    wait = send_message(chat_id, "🔍 Analyzing image... ⏳")
+    wait_id = wait["result"]["message_id"]
     try:
-        doc_file = await context.bot.get_file(doc.file_id)
-        img_bytes = bytes(await doc_file.download_as_bytearray())
-        captions = await analyze_image(img_bytes, doc.mime_type, extra)
-        await wait.delete()
-        await send_captions(update.message, captions)
+        file_path = get_file(document["file_id"])
+        img_bytes = download_file(file_path)
+        captions = gemini_image(img_bytes, mime, caption)
+        delete_message(chat_id, wait_id)
+        send_message(chat_id, f"✅ *Your 3 captions are ready:*\n\n{captions}")
     except Exception as e:
-        print(f"[document] {e}")
-        await wait.edit_text(f"❌ Something went wrong: {e}\n\nTry again bhai!")
+        print(f"[document error] {e}")
+        edit_message(chat_id, wait_id, f"❌ Error: {e}\n\nTry again bhai!")
 
 
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    if not text:
+def handle_text_msg(chat_id: int, text: str):
+    if not text.strip():
         return
-    wait = await update.message.reply_text("✍️ Generating captions... ⏳")
+    wait = send_message(chat_id, "✍️ Generating captions... ⏳")
+    wait_id = wait["result"]["message_id"]
     try:
-        captions = await analyze_text(text)
-        await wait.delete()
-        await send_captions(update.message, captions)
+        captions = gemini_text(text)
+        delete_message(chat_id, wait_id)
+        send_message(chat_id, f"✅ *Your 3 captions are ready:*\n\n{captions}")
     except Exception as e:
-        print(f"[text] {e}")
-        await wait.edit_text(f"❌ Something went wrong: {e}\n\nTry again bhai!")
+        print(f"[text error] {e}")
+        edit_message(chat_id, wait_id, f"❌ Error: {e}\n\nTry again bhai!")
 
 
-# ── MAIN ──────────────────────────────────────────────────────────
-async def main():
+# ── PROCESS ONE UPDATE ────────────────────────────────────────────
+def process_update(update: dict):
+    msg = update.get("message")
+    if not msg:
+        return
+
+    chat_id = msg["chat"]["id"]
+    text     = msg.get("text", "")
+    caption  = msg.get("caption", "")
+
+    # /start command
+    if text == "/start":
+        handle_start(chat_id)
+        return
+
+    # Photo
+    if "photo" in msg:
+        handle_photo(chat_id, msg["photo"], caption)
+        return
+
+    # Video
+    if "video" in msg:
+        handle_video(chat_id, msg["video"], caption)
+        return
+
+    # Document (uncompressed image)
+    if "document" in msg:
+        handle_document(chat_id, msg["document"], caption)
+        return
+
+    # Plain text
+    if text:
+        handle_text_msg(chat_id, text)
+        return
+
+
+# ── MAIN POLLING LOOP ─────────────────────────────────────────────
+def main():
     print("🚀 Trading Noah Caption Bot starting...")
-    app = ApplicationBuilder().token(TOKEN).build()
+    print(f"   Token  : {TOKEN[:20]}...")
+    print(f"   Gemini : {GEMINI_API_KEY[:20]}...")
+    print(f"   Owner  : {OWNER_ID}")
 
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    app.add_handler(MessageHandler(filters.VIDEO, handle_video))
-    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    offset = 0
+    print("✅ Bot running — waiting for messages...")
 
-    print("✅ Bot running — polling for updates...")
-    await app.run_polling(drop_pending_updates=True)
+    while True:
+        try:
+            updates = get_updates(offset=offset, timeout=30)
+            for update in updates.get("result", []):
+                offset = update["update_id"] + 1
+                try:
+                    process_update(update)
+                except Exception as e:
+                    print(f"[process_update error] {e}")
+        except urllib.error.URLError as e:
+            print(f"[network error] {e} — retrying in 5s")
+            time.sleep(5)
+        except Exception as e:
+            print(f"[polling error] {e} — retrying in 5s")
+            time.sleep(5)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
