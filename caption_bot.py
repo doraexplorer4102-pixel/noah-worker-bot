@@ -133,7 +133,26 @@ def get_updates(offset=0):
     return tg_post("getUpdates", {"offset": offset, "timeout": 20})
 
 
-# ── GEMINI VISION API ─────────────────────────────────────────────
+# ── GEMINI VISION — WITH RETRY ON 429 ────────────────────────────
+def gemini_call(payload, retries=4):
+    """Call Gemini API with automatic retry on rate limit (429)"""
+    for attempt in range(retries):
+        try:
+            r = http_post_json(GEMINI_URL, payload)
+            return r["candidates"][0]["content"]["parts"][0]["text"]
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                wait = 30 * (attempt + 1)  # 30s, 60s, 90s, 120s
+                print(f"[Gemini 429] Rate limit — waiting {wait}s (attempt {attempt+1}/{retries})")
+                time.sleep(wait)
+            elif e.code == 404:
+                print(f"[Gemini 404] Model not found")
+                raise
+            else:
+                raise
+    raise Exception("Gemini rate limit — too many requests. Wait 2 minutes and try again.")
+
+
 def ai_image(img_bytes, extra=""):
     b64 = base64.b64encode(img_bytes).decode()
     user_text = "Analyze this image and generate 3 Trading Noah Hinglish captions."
@@ -148,8 +167,7 @@ def ai_image(img_bytes, extra=""):
         }],
         "generationConfig": {"temperature": 0.9, "maxOutputTokens": 2000}
     }
-    r = http_post_json(GEMINI_URL, payload)
-    return r["candidates"][0]["content"]["parts"][0]["text"]
+    return gemini_call(payload)
 
 
 def ai_text(desc):
@@ -159,8 +177,7 @@ def ai_text(desc):
         }],
         "generationConfig": {"temperature": 0.9, "maxOutputTokens": 2000}
     }
-    r = http_post_json(GEMINI_URL, payload)
-    return r["candidates"][0]["content"]["parts"][0]["text"]
+    return gemini_call(payload)
 
 
 # ── HANDLERS ──────────────────────────────────────────────────────
@@ -186,7 +203,7 @@ def on_photo(chat_id, photos, caption=""):
         send_msg(chat_id, "Your 3 captions are ready:\n\n" + caps)
     except Exception as e:
         print("[photo]", e)
-        edit_msg(chat_id, wid, "Error: " + str(e) + "\n\nTry again!")
+        edit_msg(chat_id, wid, str(e))
 
 
 def on_video(chat_id, video, caption=""):
@@ -203,7 +220,7 @@ def on_video(chat_id, video, caption=""):
         send_msg(chat_id, "Your 3 captions are ready:\n\n" + caps)
     except Exception as e:
         print("[video]", e)
-        edit_msg(chat_id, wid, "Error: " + str(e) + "\n\nTry again!")
+        edit_msg(chat_id, wid, str(e))
 
 
 def on_document(chat_id, doc, caption=""):
@@ -220,7 +237,7 @@ def on_document(chat_id, doc, caption=""):
         send_msg(chat_id, "Your 3 captions are ready:\n\n" + caps)
     except Exception as e:
         print("[document]", e)
-        edit_msg(chat_id, wid, "Error: " + str(e) + "\n\nTry again!")
+        edit_msg(chat_id, wid, str(e))
 
 
 def on_text(chat_id, text):
@@ -234,7 +251,7 @@ def on_text(chat_id, text):
         send_msg(chat_id, "Your 3 captions are ready:\n\n" + caps)
     except Exception as e:
         print("[text]", e)
-        edit_msg(chat_id, wid, "Error: " + str(e) + "\n\nTry again!")
+        edit_msg(chat_id, wid, str(e))
 
 
 def process(update):
